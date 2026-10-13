@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FamilyBGT Spike</title>
+<style>
+  body { margin:0; background:#0f172a; color:#e2e8f0; font:16px/1.5 system-ui, sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:16px; }
+  button { display:block; width:100%; margin:8px 0; padding:14px; font-size:16px; border:0; border-radius:10px; background:#2563eb; color:#fff; }
+  button.alt { background:#334155; }
+  input { width:100%; box-sizing:border-box; padding:12px; font-size:16px; border-radius:10px; border:1px solid #475569; background:#1e293b; color:#e2e8f0; }
+  #who { font-weight:bold; margin:8px 0; }
+  pre { white-space:pre-wrap; word-break:break-all; background:#020617; padding:12px; border-radius:10px; font-size:13px; direction:ltr; text-align:left; }
+</style>
+</head>
+<body>
+<main>
+  <h1>בדיקת שותף</h1>
+  <div id="who">לא מחובר</div>
+  <button id="b1">1. התחברות עם Google</button>
+  <button id="b2">2. יצירת גיליון בדיקה</button>
+  <input id="email" type="email" placeholder="מייל של השותף" dir="ltr">
+  <button id="b3">3. שיתוף הגיליון עם השותף</button>
+  <button id="b4">4. הצטרפות לגיליון ששותף איתי</button>
+  <button id="b5">5. רשימת הגיליונות שהאפליקציה רואה</button>
+  <button id="b6">6. כתיבת שורה וקריאה מהגיליון</button>
+  <button id="b7" class="alt">חידוש התחברות (בלחיצה)</button>
+  <button id="b8" class="alt">העתקת היומן</button>
+  <pre id="log"></pre>
+</main>
+<script>
+const CLIENT_ID = '862322651586-1bstbtfin18vsfbk21ujdduaordi609d.apps.googleusercontent.com';
+const PROJECT_NUMBER = '862322651586';
+const PICKER_KEY = 'AIzaSyCSDMjQLrCNx8RCg1gmVEI72Z_uzR5ZLE0';
+const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+let token = null, tokenExp = 0, tokenClient = null, email = '', sheetId = null;
+const $ = id => document.getElementById(id);
+const log = (...a) => { const s = new Date().toLocaleTimeString('en-GB') + ' ' + a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' '); $('log').textContent = s + '\n' + $('log').textContent; };
+try { sheetId = localStorage.getItem('spikeSheet'); } catch {}
+log('env', { ua: navigator.userAgent, standalone: matchMedia('(display-mode: standalone)').matches, sheetId });
+
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+const ready = Promise.all([
+  loadScript('https://accounts.google.com/gsi/client'),
+  loadScript('https://apis.google.com/js/api.js').then(() => new Promise(r => gapi.load('picker', r))),
+]).then(() => {
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID, scope: SCOPE,
+    callback: async r => {
+      if (r.error) return log('AUTH ERROR', r);
+      token = r.access_token; tokenExp = Date.now() + r.expires_in * 1000;
+      log('token ok, expires in', r.expires_in, 's');
+      const me = await g('https://www.googleapis.com/drive/v3/about?fields=user');
+      email = me.user?.emailAddress || ''; $('who').textContent = 'מחובר: ' + email;
+    },
+    error_callback: e => log('POPUP ERROR', e),
+  });
+  log('libraries loaded');
+}).catch(e => log('LOAD FAIL', String(e)));
+
+async function g(url, opts = {}) {
+  if (!token) { log('לא מחובר, לחץ 1'); throw new Error('no token'); }
+  const r = await fetch(url, { ...opts, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+  const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; }
+  if (!r.ok) { log('HTTP', r.status, url.split('?')[0], j); throw new Error(r.status); }
+  return j;
+}
+
+$('b1').onclick = async () => { await ready; tokenClient.requestAccessToken({ prompt: '' }); };
+$('b7').onclick = async () => { await ready; tokenClient.requestAccessToken({ prompt: '', login_hint: email }); };
+
+$('b2').onclick = async () => {
+  const f = await g('https://www.googleapis.com/drive/v3/files?fields=id,name,appProperties', {
+    method: 'POST', body: JSON.stringify({ name: 'FamilyBGT spike ' + new Date().toISOString().slice(0, 16), mimeType: 'application/vnd.google-apps.spreadsheet', appProperties: { budgetApp: 'spike' } }),
+  });
+  sheetId = f.id; try { localStorage.setItem('spikeSheet', f.id); } catch {}
+  log('CREATED', f);
+};
+
+$('b3').onclick = async () => {
+  const to = $('email').value.trim(); if (!sheetId || !to) return log('צריך גיליון (2) ומייל');
+  const p = await g(`https://www.googleapis.com/drive/v3/files/${sheetId}/permissions?sendNotificationEmail=true&emailMessage=${encodeURIComponent('FamilyBGT test: open https://israelwall.github.io/familybgt/spike.html and tap 4')}`, {
+    method: 'POST', body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: to }),
+  });
+  log('SHARED', p);
+};
+
+$('b4').onclick = async () => {
+  await ready; if (!token) return log('לא מחובר, לחץ 1');
+  const view = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS).setOwnedByMe(false).setIncludeFolders(false);
+  new google.picker.PickerBuilder()
+    .addView(view)
+    .setOAuthToken(token).setDeveloperKey(PICKER_KEY).setAppId(PROJECT_NUMBER)
+    .setCallback(d => {
+      if (d.action === google.picker.Action.PICKED) { sheetId = d.docs[0].id; try { localStorage.setItem('spikeSheet', sheetId); } catch {} log('PICKED', { id: sheetId, name: d.docs[0].name }); }
+      else if (d.action === google.picker.Action.CANCEL) log('picker cancelled');
+    })
+    .build().setVisible(true);
+};
+
+$('b5').onclick = async () => {
+  const a = await g(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent("appProperties has { key='budgetApp' and value='spike' } and trashed=false")}&fields=files(id,name,owners(emailAddress))&includeItemsFromAllDrives=true&supportsAllDrives=true`);
+  log('BY appProperties', a.files);
+  const b = await g(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and name contains 'FamilyBGT' and trashed=false")}&fields=files(id,name,owners(emailAddress),appProperties)`);
+  log('BY name', b.files);
+};
+
+$('b6').onclick = async () => {
+  if (!sheetId) return log('אין גיליון: 2 או 4');
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`;
+  await g(`${base}/values/A1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ values: [[email, new Date().toISOString(), 12.5, '=1+1']] }) });
+  const r = await g(`${base}/values/A1:D50?valueRenderOption=UNFORMATTED_VALUE`);
+  log('ROWS', r.values);
+};
+
+$('b8').onclick = async () => { try { await navigator.clipboard.writeText($('log').textContent); log('הועתק'); } catch (e) { log('copy failed', String(e)); } };
+</script>
+</body>
+</html>
