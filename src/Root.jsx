@@ -5,6 +5,7 @@ import { AuthNeeded } from './google/api.js'
 import { pickSharedSheet } from './google/picker.js'
 import { findBudgets, whoAmI, createBudget, getFileMeta, ensureSchema, APP_TAG } from './sheets.js'
 import { COMMON_CURRENCIES, currencySymbol } from './budget.js'
+import { DEFAULT_CATEGORIES } from './defaults.js'
 
 const CHOSEN_KEY = 'fbgt_budget'
 const ls = {
@@ -72,7 +73,7 @@ export default function Root() {
     if (busy) return
     setBusy(true); setError('')
     try {
-      const file = await createBudget({ main_currency: mainCur, second_currency: secondCur, language_default: 'en' })
+      const file = await createBudget({ main_currency: mainCur, second_currency: secondCur, language_default: 'en', categories: DEFAULT_CATEGORIES.en })
       ls.set(CHOSEN_KEY, file.id); setBudgetId(file.id); setPhase('app')
     } catch (e) {
       if (e instanceof AuthNeeded) setPhase('signin')

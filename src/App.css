@@ -1173,3 +1173,6 @@ body {
 .pw-card .setup-option { background: #0f172a; border-color: #334155; color: #e2e8f0; }
 .pw-card .setup-option span { color: #94a3b8; }
 .pw-card .pw-error { align-self: stretch; text-align: center; }
+.set-budget-btn { background: var(--accent-light); color: var(--accent); border: 1px dashed var(--accent); border-radius: var(--radius-sm); padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.report-live { border: 1px dashed var(--accent); }
+.unclosed-list { margin: 8px 0 16px; }

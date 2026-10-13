@@ -63,7 +63,7 @@ export async function whoAmI() {
   return r.user
 }
 
-export async function createBudget({ name = 'FamilyBGT', main_currency, second_currency = '', cycle_start_day = 1, language_default = 'en' }) {
+export async function createBudget({ name = 'FamilyBGT', main_currency, second_currency = '', cycle_start_day = 1, language_default = 'en', categories = [] }) {
   // Tag in the same call that creates the file, so a later failure never leaves an untagged orphan
   const file = await gfetch(`${DRIVE}/files?fields=id,name`, {
     method: 'POST',
@@ -74,6 +74,9 @@ export async function createBudget({ name = 'FamilyBGT', main_currency, second_c
     schema_version: SCHEMA_VERSION, main_currency, second_currency, exchange_rate: '',
     rate_updated_at: '', language_default, cycle_start_day,
   })
+  if (categories.length) {
+    await appendRows(file.id, 'VariableCategories', categories.map((n, i) => ({ name: n, budget: 0, sort_order: i + 1 })))
+  }
   return file
 }
 
@@ -126,6 +129,14 @@ async function rowNumberOf(id, tab, keyValue) {
   const r = await gfetch(`${SHEETS}/${id}/values/${q(`${tab}!A:A`)}?valueRenderOption=UNFORMATTED_VALUE`)
   const idx = (r.values || []).findIndex((v, i) => i > 0 && String(v[0]) === String(keyValue))
   return idx < 0 ? null : idx + 1
+}
+
+export async function appendRows(id, tab, objs) {
+  const rows = objs.map(o => ({ ...o, id: o.id || newId() }))
+  await gfetch(`${SHEETS}/${id}/values/${q(`${tab}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+    method: 'POST', body: JSON.stringify({ values: rows.map(r => objectToRow(tab, r)) }),
+  })
+  return rows
 }
 
 // Writes only the changed cells, found by id right before writing, so concurrent edits of

@@ -62,7 +62,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   const [newSaving, setNewSaving] = useState({ name: '', amount: '', currency: '' })
   const [savingInputs, setSavingInputs] = useState({})
   const [newIncomeForm, setNewIncomeForm] = useState({ description: '', amount: '', currency: '' })
-  const [endMonthModal, setEndMonthModal] = useState(false)
+  const [closeTarget, setCloseTarget] = useState(null)
   const [endMonthResult, setEndMonthResult] = useState(null)
   const [expandedReport, setExpandedReport] = useState(null)
   const [historyFilter, setHistoryFilter] = useState('last3')
@@ -273,6 +273,15 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
     })
   }
 
+  function handleRenameCategory(cat) {
+    const name = prompt('New name:', cat.name)
+    if (!name || !name.trim() || name.trim() === cat.name) return
+    run(async () => {
+      await db.update(budgetId, 'VariableCategories', cat.id, { name: name.trim() })
+      setVariableCategories(prev => prev.map(c => c.id === cat.id ? { ...c, name: name.trim() } : c))
+    })
+  }
+
   function handleDeleteCategory(cat) {
     if (!confirm(`Delete the category "${cat.name}"? Its past expenses stay in closed reports.`)) return
     run(async () => {
@@ -375,19 +384,15 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
     return prev ? diffFixed(parseReportJson(prev)?.fixedItems, parseReportJson(r)?.fixedItems) || [] : []
   }
   // +1 for any deposit in the cycle, +2 when deposits reach 10% of income
-  function depositsFor(r) {
-    const j = parseReportJson(r)
+  function depositsOf(j) {
     const items = j?.deposits || []
     const total = items.reduce((a, d) => a + d.amount, 0)
-    return { items, total, bonus: total <= 0 ? 0 : total >= 0.1 * (j.income || 0) ? 2 : 1 }
+    return { items, total, bonus: total <= 0 ? 0 : total >= 0.1 * (j?.income || 0) ? 2 : 1 }
   }
 
-  // Closes the cycle that has just ended. Nothing is reset: the new cycle starts empty by date.
-  const closingCycle = previousCycle(now, startDay)
-  const closingExists = monthlyReports.some(r => r.id === closingCycle.key)
-
-  const handleEndMonth = () => run(async () => {
-    const c = closingCycle
+  // Report snapshot of any period, from the rows in the sheet. Budgets, fixed costs and regular
+  // income are today's values; expenses, one-time income and deposits are those dated in the period.
+  function buildSnapshot(c) {
     const cycleActuals = actualsByCategory(transactions, c)
     const categories = variableCategories.map(cat => ({ name: cat.name, budget: num(cat.budget), actual: cycleActuals[cat.id] || 0 }))
     const fixedItems = activeFixed.map(e => ({ name: e.name, amount: roundMoney(tm(e.amount, e.currency), main) }))
@@ -410,12 +415,78 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
       savings: savings.map(s => ({ name: s.name, amount: balances[s.id].balance, currency: s.currency })),
       oneTimeIncome: oneTime.map(i => ({ description: i.description, amount: i.amount, currency: i.currency })),
     }
+    return { reportJson, score, reasons }
+  }
+
+  // Closing a finished period saves its report. Nothing is reset: each period starts empty by date.
+  const closingCycle = previousCycle(now, startDay)
+  const reportKeys = new Set(monthlyReports.map(r => r.id))
+  // Older finished periods that have activity but no report yet
+  const unclosedCycles = (() => {
+    const keys = new Map()
+    const add = iso => {
+      const c = cycleOf(new Date(iso), startDay)
+      if (c.start < cycle.start && c.key !== closingCycle.key && !reportKeys.has(c.key)) keys.set(c.key, c)
+    }
+    transactions.forEach(t => add(t.added_at))
+    oneTimeIncome.forEach(i => add(i.added_at))
+    savingsEntries.filter(e => e.kind === 'deposit').forEach(e => add(e.added_at))
+    return [...keys.values()].sort((a, b) => b.start - a.start)
+  })()
+
+  const handleCloseCycle = c => run(async () => {
+    const { reportJson, score, reasons } = buildSnapshot(c)
     const row = { id: c.key, month: c.month, year: c.year, rate_snapshot: rate ?? '', report_json: JSON.stringify(reportJson), score }
     await db.upsert(budgetId, 'MonthlyReports', c.key, row)
     setMonthlyReports(prev => [...prev.filter(r => r.id !== c.key), row].sort(byMonthDesc))
-    setEndMonthModal(false)
+    setCloseTarget(null)
     setEndMonthResult({ score, reasons, label: cycleLabel(c, 'long') })
   })
+
+  function reportBody(j, changes, dep, score) {
+    const cats = j.categories || []
+    const varTotal = cats.reduce((a, c) => a + (c.actual || 0), 0)
+    const varBudget = cats.reduce((a, c) => a + (c.budget || 0), 0)
+    return (
+      <>
+        <table className="report-numbers" onClick={e => e.stopPropagation()}>
+          <thead><tr><th>Category</th><th>Actual</th><th>Budget</th><th>Diff</th></tr></thead>
+          <tbody>
+            {cats.filter(c => c.budget || c.actual).map(c => (
+              <tr key={c.name}>
+                <td>{c.name}</td><td>{m(c.actual)}</td><td>{m(c.budget)}</td>
+                <td className={c.actual > c.budget ? 'num-over' : 'num-under'}>{m(c.budget - c.actual)}</td>
+              </tr>
+            ))}
+            <tr className="num-total"><td>Variable total</td><td>{m(varTotal)}</td><td>{m(varBudget)}</td>
+              <td className={varTotal > varBudget ? 'num-over' : 'num-under'}>{m(varBudget - varTotal)}</td></tr>
+            <tr><td>Fixed total</td><td>{m(j.fixedTotal)}</td><td></td><td></td></tr>
+            {(j.fixedItems || []).map(it => {
+              const ch = changes.find(f => f.name === it.name)
+              const note = ch ? (ch.kind === 'new' ? 'new' : `${m(ch.from)} → ${m(ch.to)}`) : ''
+              return (
+                <tr key={it.name} className="fixed-change"><td>↳ {it.name}</td><td>{m(it.amount)}</td><td>{note}</td>
+                  <td className={ch ? (ch.diff > 0 ? 'num-over' : 'num-under') : ''}>{ch ? `${ch.diff > 0 ? '+' : '−'}${m(Math.abs(ch.diff))}` : ''}</td></tr>
+              )
+            })}
+            {changes.filter(f => f.kind === 'removed').map(f => (
+              <tr key={f.name} className="fixed-change"><td>↳ {f.name}</td><td>{m(0)}</td><td>removed or paused</td>
+                <td className="num-under">−{m(Math.abs(f.diff))}</td></tr>
+            ))}
+            <tr><td>Income</td><td>{m(j.income)}</td><td></td><td></td></tr>
+            <tr className="num-total"><td>Left over</td><td className={(j.income - j.fixedTotal - varTotal) < 0 ? 'num-over' : 'num-under'}>{m(j.income - j.fixedTotal - varTotal)}</td><td></td><td></td></tr>
+          </tbody>
+        </table>
+        {dep.bonus > 0 && (
+          <p className="savings-note">💰 Deposited to savings (not part of the score): {dep.items.map(d => `${d.name} ${m(d.amount)}`).join(', ')}</p>
+        )}
+        <div className="score-reasons">
+          <strong>Score {score}/10:</strong>{' '}
+          {budgetScore(j.categories).reasons.map(x => `−${x.pts} ${reasonText(x)}`).join(' · ') || 'no points lost'}
+        </div>
+      </>
+    )
+  }
 
   const navItems = [
     { id: 'dashboard', label: 'Overview', icon: '◈' },
@@ -510,7 +581,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
               const varPct = totalVariableBudget > 0 ? Math.min(100, (totalVariableActual / totalVariableBudget) * 100) : 0
               const varRemaining = totalVariableBudget - totalVariableActual
               const recentReports = monthlyReports.slice(0, 3)
-              const isEmpty = !fixedExpenses.length && !incomeSources.length && !variableCategories.length
+              const isEmpty = !fixedExpenses.length && !incomeSources.length && totalVariableBudget === 0
               return (
                 <>
                   <div className="dash-period">
@@ -521,7 +592,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                   {isEmpty && (
                     <div className="empty-state">
                       Start by adding your regular income on the Income tab, your fixed monthly costs on the Fixed tab,
-                      and a monthly budget for each spending category on the Variable tab.
+                      and a monthly budget for each spending category on the Variable tab. Starter categories are ready there: rename, delete or add your own.
                     </div>
                   )}
 
@@ -614,7 +685,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
               )
             })()}
 
-            <button className="end-month-btn" onClick={() => setEndMonthModal(true)}>
+            <button className="end-month-btn" onClick={() => setCloseTarget(closingCycle)}>
               📅 Close {cycleLabel(closingCycle, 'long')}
             </button>
           </section>
@@ -717,7 +788,10 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                     <div className="var-header">
                       <span className="var-name">{cat.name}</span>
                       <div className="var-header-right">
-                        <span className="var-budget-label">Budget: {m(budget)}</span>
+                        {budget > 0
+                          ? <span className="var-budget-label">Budget: {m(budget)}</span>
+                          : <button className="set-budget-btn" onClick={() => handleUpdateBudget(cat)}>Set budget</button>}
+                        <button className="icon-btn-sm" onClick={() => handleRenameCategory(cat)} title="Rename">✎</button>
                         <button className="icon-btn-sm" onClick={() => handleUpdateBudget(cat)} title="Edit budget">⇄</button>
                         <button className="icon-btn-sm" onClick={() => handleDeleteCategory(cat)} title="Delete category">✕</button>
                       </div>
@@ -960,8 +1034,37 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
         {activeSection === 'reports' && (
           <section className="section">
             <h2 className="section-title">Monthly Reports</h2>
+            {(() => {
+              const live = buildSnapshot(cycle)
+              const j = live.reportJson
+              return (
+                <div className="report-card report-live" onClick={() => setExpandedReport(expandedReport === 'live' ? null : 'live')}>
+                  <div className="report-card-header">
+                    <span className="report-month">This period so far <span className="report-range">{fmtDay(cycle.start)} – {fmtDay(new Date(cycle.end.getTime() - 86400000))}</span></span>
+                    <div className="report-meta">
+                      <span className={`score-badge score-${live.score >= 8 ? 'high' : live.score >= 5 ? 'mid' : 'low'}`}>{live.score}/10</span>
+                      <span className="report-chevron">{expandedReport === 'live' ? '▲' : '▼'}</span>
+                    </div>
+                  </div>
+                  {expandedReport === 'live' && (
+                    <div className="report-expanded">
+                      {reportBody(j, j.fixedChanges || [], depositsOf(j), live.score)}
+                      <p className="history-note">Live view. It is saved as a report when you close this period after it ends.</p>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+            {unclosedCycles.length > 0 && (
+              <div className="unclosed-list">
+                <p className="history-note">Finished periods without a report:</p>
+                {unclosedCycles.map(c => (
+                  <button key={c.key} className="add-category-btn" onClick={() => setCloseTarget(c)}>Close {cycleLabel(c, 'long')}</button>
+                ))}
+              </div>
+            )}
             {monthlyReports.length === 0 ? (
-              <div className="empty-state">No reports yet. When a period ends, press "Close" on the Overview tab to save its report.</div>
+              <div className="empty-state">No saved reports yet. When a period ends, press "Close" on the Overview tab to save its report.</div>
             ) : (
               <>
               {(() => {
@@ -1039,7 +1142,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                   const isExpanded = expandedReport === r.id
                   const j = parseReportJson(r)
                   const score = scoreOf(r)
-                  const dep = depositsFor(r)
+                  const dep = depositsOf(j)
                   return (
                     <div className="report-card" key={r.id} onClick={() => setExpandedReport(isExpanded ? null : r.id)}>
                       <div className="report-card-header">
@@ -1055,51 +1158,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                         </div>
                       </div>
                       {isExpanded && j && (
-                        <div className="report-expanded">
-                          {(() => {
-                            const cats = j.categories || []
-                            const varTotal = cats.reduce((a, c) => a + (c.actual || 0), 0)
-                            const varBudget = cats.reduce((a, c) => a + (c.budget || 0), 0)
-                            const changes = fixedChangesFor(r)
-                            return (
-                              <table className="report-numbers" onClick={e => e.stopPropagation()}>
-                                <thead><tr><th>Category</th><th>Actual</th><th>Budget</th><th>Diff</th></tr></thead>
-                                <tbody>
-                                  {cats.filter(c => c.budget || c.actual).map(c => (
-                                    <tr key={c.name}>
-                                      <td>{c.name}</td><td>{m(c.actual)}</td><td>{m(c.budget)}</td>
-                                      <td className={c.actual > c.budget ? 'num-over' : 'num-under'}>{m(c.budget - c.actual)}</td>
-                                    </tr>
-                                  ))}
-                                  <tr className="num-total"><td>Variable total</td><td>{m(varTotal)}</td><td>{m(varBudget)}</td>
-                                    <td className={varTotal > varBudget ? 'num-over' : 'num-under'}>{m(varBudget - varTotal)}</td></tr>
-                                  <tr><td>Fixed total</td><td>{m(j.fixedTotal)}</td><td></td><td></td></tr>
-                                  {(j.fixedItems || []).map(it => {
-                                    const ch = changes.find(f => f.name === it.name)
-                                    const note = ch ? (ch.kind === 'new' ? 'new' : `${m(ch.from)} → ${m(ch.to)}`) : ''
-                                    return (
-                                      <tr key={it.name} className="fixed-change"><td>↳ {it.name}</td><td>{m(it.amount)}</td><td>{note}</td>
-                                        <td className={ch ? (ch.diff > 0 ? 'num-over' : 'num-under') : ''}>{ch ? `${ch.diff > 0 ? '+' : '−'}${m(Math.abs(ch.diff))}` : ''}</td></tr>
-                                    )
-                                  })}
-                                  {changes.filter(f => f.kind === 'removed').map(f => (
-                                    <tr key={f.name} className="fixed-change"><td>↳ {f.name}</td><td>{m(0)}</td><td>removed or paused</td>
-                                      <td className="num-under">−{m(Math.abs(f.diff))}</td></tr>
-                                  ))}
-                                  <tr><td>Income</td><td>{m(j.income)}</td><td></td><td></td></tr>
-                                  <tr className="num-total"><td>Left over</td><td className={(j.income - j.fixedTotal - varTotal) < 0 ? 'num-over' : 'num-under'}>{m(j.income - j.fixedTotal - varTotal)}</td><td></td><td></td></tr>
-                                </tbody>
-                              </table>
-                            )
-                          })()}
-                          {dep.bonus > 0 && (
-                            <p className="savings-note">💰 Deposited to savings (not part of the score): {dep.items.map(d => `${d.name} ${m(d.amount)}`).join(', ')}</p>
-                          )}
-                          <div className="score-reasons">
-                            <strong>Score {score}/10:</strong>{' '}
-                            {budgetScore(j.categories).reasons.map(x => `−${x.pts} ${reasonText(x)}`).join(' · ') || 'no points lost'}
-                          </div>
-                        </div>
+                        <div className="report-expanded">{reportBody(j, fixedChangesFor(r), dep, score)}</div>
                       )}
                     </div>
                   )
@@ -1132,18 +1191,18 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
         )}
       </main>
 
-      {endMonthModal && (
-        <div className="modal-overlay" onClick={() => !busy && setEndMonthModal(false)}>
+      {closeTarget && (
+        <div className="modal-overlay" onClick={() => !busy && setCloseTarget(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3>Close {cycleLabel(closingCycle, 'long')}?</h3>
+            <h3>Close {cycleLabel(closeTarget, 'long')}?</h3>
             <p>
-              This saves the report for the period {fmtDay(closingCycle.start)} – {fmtDay(new Date(closingCycle.end.getTime() - 86400000))}.
+              This saves the report for the period {fmtDay(closeTarget.start)} – {fmtDay(new Date(closeTarget.end.getTime() - 86400000))}.
               The current period is not affected.
-              {closingExists && ' A report for this period already exists and will be updated.'}
+              {reportKeys.has(closeTarget.key) && ' A report for this period already exists and will be updated.'}
             </p>
             <div className="modal-actions">
-              <button className="btn-cancel" onClick={() => setEndMonthModal(false)} disabled={busy}>Cancel</button>
-              <button className="btn-primary" onClick={handleEndMonth} disabled={busy}>{busy ? 'Saving…' : 'Save report'}</button>
+              <button className="btn-cancel" onClick={() => setCloseTarget(null)} disabled={busy}>Cancel</button>
+              <button className="btn-primary" onClick={() => handleCloseCycle(closeTarget)} disabled={busy}>{busy ? 'Saving…' : 'Save report'}</button>
             </div>
           </div>
         </div>
