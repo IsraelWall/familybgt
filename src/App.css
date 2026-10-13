@@ -1167,3 +1167,9 @@ body {
 .toast-x { float: inline-end; opacity: 0.6; }
 .settings-modal { text-align: start; max-height: 85svh; overflow-y: auto; }
 .settings-group { border-top: 1px solid var(--border-light); padding-top: 12px; margin-top: 12px; }
+.pw-card .setup-label, .pw-card .setup-hint, .pw-card .pw-btn, .pw-card .setup-divider, .pw-card .setup-list { align-self: stretch; }
+.pw-card .setup-label { color: #94a3b8; margin: 0; }
+.setup-select { width: 100%; border: 1px solid #334155; border-radius: var(--radius-sm); background: #0f172a; color: #e2e8f0; padding: 12px 10px; font-size: 15px; font-weight: 500; }
+.pw-card .setup-option { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+.pw-card .setup-option span { color: #94a3b8; }
+.pw-card .pw-error { align-self: stretch; text-align: center; }
