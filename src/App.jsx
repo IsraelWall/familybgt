@@ -421,6 +421,10 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   // Closing a finished period saves its report. Nothing is reset: each period starts empty by date.
   const closingCycle = previousCycle(now, startDay)
   const reportKeys = new Set(monthlyReports.map(r => r.id))
+  const hasActivity = c => transactions.some(t => inCycle(t.added_at, c)) || oneTimeIncome.some(i => inCycle(i.added_at, c))
+    || savingsEntries.some(e => e.kind === 'deposit' && inCycle(e.added_at, c))
+  // Offered on the Overview only when the finished period had activity, or to update its report
+  const canCloseLast = hasActivity(closingCycle) || reportKeys.has(closingCycle.key)
   // Older finished periods that have activity but no report yet
   const unclosedCycles = (() => {
     const keys = new Map()
@@ -685,9 +689,11 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
               )
             })()}
 
-            <button className="end-month-btn" onClick={() => setCloseTarget(closingCycle)}>
-              📅 Close {cycleLabel(closingCycle, 'long')}
-            </button>
+            {canCloseLast && (
+              <button className="end-month-btn" onClick={() => setCloseTarget(closingCycle)}>
+                📅 Close {cycleLabel(closingCycle, 'long')}
+              </button>
+            )}
           </section>
         )}
 
