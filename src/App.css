@@ -1145,3 +1145,25 @@ body {
 .savings-note { font-size: 13px; color: var(--green); background: var(--green-light); padding: 8px 10px; border-radius: var(--radius-sm); }
 .score-reasons { font-size: 12px; color: var(--text-muted); background: var(--bg); padding: 6px 10px; border-radius: var(--radius-sm); }
 .fixed-toggle { cursor: pointer; } .fixed-toggle td:first-child { color: var(--accent); }
+
+/* ---------- FamilyBGT: sign-in, setup, settings, messages ---------- */
+.pw-btn:disabled, .btn-save:disabled, .btn-add:disabled, .btn-return:disabled, .btn-primary:disabled, .btn-primary-full:disabled { opacity: 0.6; cursor: wait; }
+.pw-btn-secondary { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); }
+.pw-link, .settings-link { display: block; width: 100%; margin-top: 12px; background: none; border: 0; color: var(--accent); font-size: 14px; cursor: pointer; text-align: center; text-decoration: none; padding: 8px 0; }
+.setup-label { display: flex; flex-direction: column; gap: 6px; text-align: start; font-size: 13px; font-weight: 600; color: var(--text-muted); margin: 12px 0 0; }
+.setup-select { width: 100%; }
+.setup-hint { font-size: 12px; color: var(--text-light); margin: 8px 0 0; text-align: start; }
+.setup-divider { display: flex; align-items: center; gap: 8px; margin: 18px 0 6px; color: var(--text-light); font-size: 12px; }
+.setup-divider::before, .setup-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+.setup-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.setup-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; text-align: start; }
+.setup-option span { font-size: 12px; color: var(--text-muted); }
+.setup-footer { margin-top: 20px; font-size: 12px; color: var(--text-light); }
+.setup-footer a { color: var(--text-muted); }
+.header-right { display: flex; align-items: center; gap: 8px; }
+.settings-btn { font-size: 18px; }
+.auth-banner { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--orange-light); color: var(--text); border-bottom: 1px solid var(--orange); font-size: 14px; }
+.toast { position: fixed; bottom: 16px; inset-inline: 16px; z-index: 60; max-width: 480px; margin: 0 auto; padding: 12px 16px; border-radius: var(--radius); background: var(--text); color: var(--surface); font-size: 14px; box-shadow: var(--shadow-md); cursor: pointer; }
+.toast-x { float: inline-end; opacity: 0.6; }
+.settings-modal { text-align: start; max-height: 85svh; overflow-y: auto; }
+.settings-group { border-top: 1px solid var(--border-light); padding-top: 12px; margin-top: 12px; }
