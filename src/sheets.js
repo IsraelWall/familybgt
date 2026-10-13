@@ -182,7 +182,10 @@ export async function writeConfig(id, entries) {
 }
 
 export async function shareWith(id, email) {
-  const msg = 'You were invited to a shared family budget on FamilyBGT. Open https://israelwall.github.io/familybgt/ , sign in with this Google account and choose "Join a budget shared with me".'
+  const msg = [
+    'You were invited to a shared family budget on FamilyBGT. Open https://israelwall.github.io/familybgt/ , sign in with this Google account and choose "Join a budget shared with me".',
+    'הוזמנתם לתקציב משפחתי משותף ב FamilyBGT. פתחו את https://israelwall.github.io/familybgt/ , התחברו עם חשבון Google הזה ובחרו "הצטרפות לתקציב ששותף איתי".',
+  ].join('\n\n')
   return gfetch(`${DRIVE}/files/${id}/permissions?sendNotificationEmail=true&emailMessage=${q(msg)}`, {
     method: 'POST', body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: email }),
   })

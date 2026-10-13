@@ -54,9 +54,10 @@ export function roundMoney(amount, currency) {
   return Math.round((Number(amount) || 0) * f) / f
 }
 
-export function formatMoney(amount, currency, { locale = 'en', digits = 0 } = {}) {
+// sign: 'auto' (minus only) or 'always' (+/-). The sign is placed by Intl, so it sits correctly in RTL too.
+export function formatMoney(amount, currency, { locale = 'en', digits = 0, sign = 'auto' } = {}) {
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: digits, minimumFractionDigits: 0 }).format(Number(amount) || 0)
+    return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: digits, minimumFractionDigits: 0, signDisplay: sign === 'always' ? 'exceptZero' : 'auto' }).format(Number(amount) || 0)
   } catch {
     return `${Math.round(Number(amount) || 0)} ${currency}`
   }

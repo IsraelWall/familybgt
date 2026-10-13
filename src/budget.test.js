@@ -106,3 +106,28 @@ describe('report', () => {
     ])
   })
 })
+
+import { STRINGS, translate } from './i18n.js'
+import { DEFAULT_CATEGORIES } from './defaults.js'
+
+describe('i18n', () => {
+  it('Hebrew and English have the same keys', () => {
+    const en = Object.keys(STRINGS.en).sort(), he = Object.keys(STRINGS.he).sort()
+    expect(he.filter(k => !en.includes(k))).toEqual([])
+    expect(en.filter(k => !he.includes(k))).toEqual([])
+  })
+  it('placeholders match between languages', () => {
+    const ph = s => (s.match(/\{\w+\}/g) || []).sort().join()
+    for (const k of Object.keys(STRINGS.en)) expect(ph(STRINGS.he[k]), k).toBe(ph(STRINGS.en[k]))
+  })
+  it('fills placeholders and falls back to English', () => {
+    expect(translate('he', 'daysAgo', { n: 3 })).toBe('לפני 3 ימים')
+    expect(translate('xx', 'save')).toBe('Save')
+  })
+  it('no dashes in Hebrew prose', () => {
+    for (const [k, v] of Object.entries(STRINGS.he)) expect(/[–—־]/.test(v), k).toBe(false)
+  })
+  it('default categories exist for both languages', () => {
+    expect(DEFAULT_CATEGORIES.he.length).toBe(DEFAULT_CATEGORIES.en.length)
+  })
+})

@@ -3,7 +3,9 @@ import './App.css'
 import * as db from './sheets.js'
 import { signIn } from './google/auth.js'
 import { AuthNeeded } from './google/api.js'
-import { diffFixed, budgetScore, reasonText } from './report/score.js'
+import { diffFixed, budgetScore } from './report/score.js'
+import { useI18n } from './i18n.js'
+import LanguageSwitch from './LanguageSwitch.jsx'
 import {
   cycleOf, previousCycle, cycleForReport, inCycle, toMain, roundMoney, formatMoney, currencySymbol,
   actualsByCategory, savingBalance, clampStartDay,
@@ -27,6 +29,7 @@ async function fetchLiveRate(main, second) {
 }
 
 export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
+  const { t, lang, locale } = useI18n()
   const [now] = useState(() => new Date())
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -77,10 +80,13 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   const cur = useMemo(() => ({ main, second, rate }), [main, second, rate])
   const currencies = [main, second].filter(Boolean)
 
-  const m = (n, c = main, digits = 0) => formatMoney(n, c, { digits })
-  const inSecond = n => (second && rate ? formatMoney(n * rate, second) : null)
+  const m = (n, c = main, digits = 0) => formatMoney(n, c, { digits, locale })
+  const ms = (n, c = main) => formatMoney(n, c, { locale, sign: 'always' })
+  const inSecond = n => (second && rate ? formatMoney(n * rate, second, { locale }) : null)
   const tm = useCallback((amount, currency) => toMain(amount, currency, cur), [cur])
-  const sym = currencySymbol(main)
+  const sym = currencySymbol(main, locale)
+  const arrow = lang === 'he' ? '←' : '→'
+  const reasonLine = r => r.code === 'total_over' ? t('reasonTotalOver', { pct: r.pct }) : t('reasonCategoryOver', { name: r.name, pct: r.pct })
 
   // ---------- load ----------
   useEffect(() => {
@@ -136,7 +142,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
     try { await fn() }
     catch (e) {
       if (e instanceof AuthNeeded) setAuthRetry(() => fn)
-      else { console.warn(e); setToast(e.message || 'Saving failed. Check your connection and try again.') }
+      else { console.warn(e); setToast(e.message || t('saveFailed')) }
     } finally { setBusy(false) }
   }
 
@@ -169,13 +175,13 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
 
   function timeAgo(iso) {
     const diff = Math.floor((now.getTime() - Date.parse(iso)) / 86400000)
-    if (diff === 0) return 'today'
-    if (diff === 1) return 'yesterday'
-    return `${diff} days ago`
+    if (diff === 0) return t('today')
+    if (diff === 1) return t('yesterday')
+    return t('daysAgo', { n: diff })
   }
 
-  const fmtDay = d => d.toLocaleString('en', { month: 'short', day: 'numeric' })
-  const cycleLabel = (r, fmt = 'short') => new Date(r.year, r.month - 1).toLocaleString('en', { month: fmt, year: 'numeric' })
+  const fmtDay = d => d.toLocaleString(locale, { month: 'short', day: 'numeric' })
+  const cycleLabel = (r, fmt = 'short') => new Date(r.year, r.month - 1).toLocaleString(locale, { month: fmt, year: 'numeric' })
   const cycleRange = r => { const c = cycleForReport(r.month, r.year, startDay); return `${fmtDay(c.start)} – ${fmtDay(new Date(c.end.getTime() - 86400000))}` }
 
   // ---------- handlers ----------
@@ -263,7 +269,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   })
 
   function handleUpdateBudget(cat) {
-    const val = prompt(`New monthly budget for ${cat.name} (${main})?`, cat.budget)
+    const val = prompt(t('promptBudget', { name: cat.name, currency: main }), cat.budget)
     if (val == null) return
     const n = Number(val)
     if (Number.isNaN(n) || n < 0) return
@@ -274,7 +280,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   }
 
   function handleRenameCategory(cat) {
-    const name = prompt('New name:', cat.name)
+    const name = prompt(t('newName'), cat.name)
     if (!name || !name.trim() || name.trim() === cat.name) return
     run(async () => {
       await db.update(budgetId, 'VariableCategories', cat.id, { name: name.trim() })
@@ -283,7 +289,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   }
 
   function handleDeleteCategory(cat) {
-    if (!confirm(`Delete the category "${cat.name}"? Its past expenses stay in closed reports.`)) return
+    if (!confirm(t('confirmDeleteCategory', { name: cat.name }))) return
     run(async () => {
       await db.softDelete(budgetId, 'VariableCategories', cat.id)
       setVariableCategories(prev => prev.filter(c => c.id !== cat.id))
@@ -330,7 +336,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   })
 
   function handleDeleteSaving(sv) {
-    if (!confirm(`Delete the savings account "${sv.name}"?`)) return
+    if (!confirm(t('confirmDeleteSaving', { name: sv.name }))) return
     run(async () => {
       await db.softDelete(budgetId, 'Savings', sv.id)
       setSavings(prev => prev.filter(s => s.id !== sv.id))
@@ -338,7 +344,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
   }
 
   function handleRenameSaving(sv) {
-    const name = prompt('New name:', sv.name)
+    const name = prompt(t('newName'), sv.name)
     if (!name || !name.trim()) return
     run(async () => {
       await db.update(budgetId, 'Savings', sv.id, { name: name.trim() })
@@ -363,10 +369,10 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
 
   const handleInvite = () => run(async () => {
     const email = inviteEmail.trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setToast('Enter a valid email address'); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setToast(t('invalidEmail')); return }
     await db.shareWith(budgetId, email)
     setInviteEmail('')
-    setToast(`Invitation sent to ${email}`)
+    setToast(t('inviteSent', { email }))
   })
 
   function handleStartDay(val) {
@@ -454,7 +460,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
     return (
       <>
         <table className="report-numbers" onClick={e => e.stopPropagation()}>
-          <thead><tr><th>Category</th><th>Actual</th><th>Budget</th><th>Diff</th></tr></thead>
+          <thead><tr><th>{t('category')}</th><th>{t('actual')}</th><th>{t('budget')}</th><th>{t('diff')}</th></tr></thead>
           <tbody>
             {cats.filter(c => c.budget || c.actual).map(c => (
               <tr key={c.name}>
@@ -462,43 +468,43 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                 <td className={c.actual > c.budget ? 'num-over' : 'num-under'}>{m(c.budget - c.actual)}</td>
               </tr>
             ))}
-            <tr className="num-total"><td>Variable total</td><td>{m(varTotal)}</td><td>{m(varBudget)}</td>
+            <tr className="num-total"><td>{t('variableTotal')}</td><td>{m(varTotal)}</td><td>{m(varBudget)}</td>
               <td className={varTotal > varBudget ? 'num-over' : 'num-under'}>{m(varBudget - varTotal)}</td></tr>
-            <tr><td>Fixed total</td><td>{m(j.fixedTotal)}</td><td></td><td></td></tr>
+            <tr><td>{t('fixedTotal')}</td><td>{m(j.fixedTotal)}</td><td></td><td></td></tr>
             {(j.fixedItems || []).map(it => {
               const ch = changes.find(f => f.name === it.name)
-              const note = ch ? (ch.kind === 'new' ? 'new' : `${m(ch.from)} → ${m(ch.to)}`) : ''
+              const note = ch ? (ch.kind === 'new' ? t('isNew') : `${m(ch.from)} ${arrow} ${m(ch.to)}`) : ''
               return (
                 <tr key={it.name} className="fixed-change"><td>↳ {it.name}</td><td>{m(it.amount)}</td><td>{note}</td>
-                  <td className={ch ? (ch.diff > 0 ? 'num-over' : 'num-under') : ''}>{ch ? `${ch.diff > 0 ? '+' : '−'}${m(Math.abs(ch.diff))}` : ''}</td></tr>
+                  <td className={ch ? (ch.diff > 0 ? 'num-over' : 'num-under') : ''}>{ch ? ms(ch.diff) : ''}</td></tr>
               )
             })}
             {changes.filter(f => f.kind === 'removed').map(f => (
-              <tr key={f.name} className="fixed-change"><td>↳ {f.name}</td><td>{m(0)}</td><td>removed or paused</td>
-                <td className="num-under">−{m(Math.abs(f.diff))}</td></tr>
+              <tr key={f.name} className="fixed-change"><td>↳ {f.name}</td><td>{m(0)}</td><td>{t('removedPaused')}</td>
+                <td className="num-under">{m(-Math.abs(f.diff))}</td></tr>
             ))}
-            <tr><td>Income</td><td>{m(j.income)}</td><td></td><td></td></tr>
-            <tr className="num-total"><td>Left over</td><td className={(j.income - j.fixedTotal - varTotal) < 0 ? 'num-over' : 'num-under'}>{m(j.income - j.fixedTotal - varTotal)}</td><td></td><td></td></tr>
+            <tr><td>{t('income')}</td><td>{m(j.income)}</td><td></td><td></td></tr>
+            <tr className="num-total"><td>{t('leftOver')}</td><td className={(j.income - j.fixedTotal - varTotal) < 0 ? 'num-over' : 'num-under'}>{m(j.income - j.fixedTotal - varTotal)}</td><td></td><td></td></tr>
           </tbody>
         </table>
         {dep.bonus > 0 && (
-          <p className="savings-note">💰 Deposited to savings (not part of the score): {dep.items.map(d => `${d.name} ${m(d.amount)}`).join(', ')}</p>
+          <p className="savings-note">{t('deposited', { items: dep.items.map(d => `${d.name} ${m(d.amount)}`).join(', ') })}</p>
         )}
         <div className="score-reasons">
-          <strong>Score {score}/10:</strong>{' '}
-          {budgetScore(j.categories).reasons.map(x => `−${x.pts} ${reasonText(x)}`).join(' · ') || 'no points lost'}
+          <strong>{t('scoreLabel', { score })}</strong>{' '}
+          {budgetScore(j.categories).reasons.map(x => `−${x.pts} ${reasonLine(x)}`).join(' · ') || t('noPointsLost')}
         </div>
       </>
     )
   }
 
   const navItems = [
-    { id: 'dashboard', label: 'Overview', icon: '◈' },
-    { id: 'fixed', label: 'Fixed', icon: '⬛' },
-    { id: 'variable', label: 'Variable', icon: '◎' },
-    { id: 'income', label: 'Income', icon: '▲' },
-    { id: 'savings', label: 'Savings', icon: '◆' },
-    { id: 'reports', label: 'Reports', icon: '📊' },
+    { id: 'dashboard', label: t('navOverview'), icon: '◈' },
+    { id: 'fixed', label: t('navFixed'), icon: '⬛' },
+    { id: 'variable', label: t('navVariable'), icon: '◎' },
+    { id: 'income', label: t('navIncome'), icon: '▲' },
+    { id: 'savings', label: t('navSavings'), icon: '◆' },
+    { id: 'reports', label: t('navReports'), icon: '📊' },
   ]
 
   const currencyPicker = (value, onChange, className = 'currency-select') => currencies.length > 1 ? (
@@ -509,15 +515,15 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
 
   const authBanner = authRetry && (
     <div className="auth-banner">
-      <span>Your Google sign-in expired. Nothing you typed was lost.</span>
-      <button className="btn-primary" onClick={continueAfterAuth}>Continue</button>
+      <span>{t('authExpired')}</span>
+      <button className="btn-primary" onClick={continueAfterAuth}>{t('continue')}</button>
     </div>
   )
 
   if (loading) {
     return (
       <div className="app loading-screen">
-        <div className="loading-spinner">Loading your budget…</div>
+        <div className="loading-spinner">{t('loadingBudget')}</div>
       </div>
     )
   }
@@ -527,9 +533,9 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
       <div className="pw-screen">
         <div className="pw-card">
           <h1 className="pw-title">FamilyBGT</h1>
-          {authBanner || <p className="pw-error">Couldn't open the budget: {loadError}</p>}
-          <button className="pw-btn" onClick={() => window.location.reload()}>Try again</button>
-          <button className="pw-link" onClick={onSwitchBudget}>Choose another budget</button>
+          {authBanner || <p className="pw-error">{t('loadFailed', { error: loadError })}</p>}
+          <button className="pw-btn" onClick={() => window.location.reload()}>{t('tryAgain')}</button>
+          <button className="pw-link" onClick={onSwitchBudget}>{t('chooseAnother')}</button>
         </div>
       </div>
     )
@@ -558,13 +564,13 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                 </div>
               ) : (
                 <button className="rate-btn" onClick={() => setEditingRate(true)}>
-                  {rate ? `1 ${main} = ${rate.toFixed(rate < 10 ? 3 : 2)} ${second}` : `Set ${main}/${second} rate`}
-                  {rateIsLive && <span className="rate-live-dot" title="Live rate">●</span>}<span className="edit-icon">✎</span>
+                  <span dir="ltr">{rate ? `1 ${main} = ${rate.toFixed(rate < 10 ? 3 : 2)} ${second}` : t('setRate', { main, second })}</span>
+                  {rateIsLive && <span className="rate-live-dot" title={t('liveRate')}>●</span>}<span className="edit-icon">✎</span>
                 </button>
               )}
             </div>
           )}
-          <button className="icon-btn settings-btn" onClick={() => setSettingsOpen(true)} title="Settings">⚙</button>
+          <button className="icon-btn settings-btn" onClick={() => setSettingsOpen(true)} title={t('settings')}>⚙</button>
         </div>
       </header>
 
@@ -589,42 +595,41 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
               return (
                 <>
                   <div className="dash-period">
-                    <span className="dash-period-label">Current period</span>
+                    <span className="dash-period-label">{t('currentPeriod')}</span>
                     <span className="dash-period-range">{fmtDay(cycle.start)} — {fmtDay(new Date(cycle.end.getTime() - 86400000))}</span>
                   </div>
 
                   {isEmpty && (
                     <div className="empty-state">
-                      Start by adding your regular income on the Income tab, your fixed monthly costs on the Fixed tab,
-                      and a monthly budget for each spending category on the Variable tab. Starter categories are ready there: rename, delete or add your own.
+                      {t('emptyStart')}
                     </div>
                   )}
 
                   <div className="dash-kpi-grid">
                     <div className="kpi-card kpi-income">
-                      <div className="kpi-label">Income</div>
+                      <div className="kpi-label">{t('income')}</div>
                       <div className="kpi-value">{m(totalIncome)}</div>
                       {inSecond(totalIncome) && <div className="kpi-sub">{inSecond(totalIncome)}</div>}
                     </div>
                     <div className="kpi-card kpi-fixed">
-                      <div className="kpi-label">Fixed</div>
+                      <div className="kpi-label">{t('fixed')}</div>
                       <div className="kpi-value">{m(totalFixed)}</div>
                       {inSecond(totalFixed) && <div className="kpi-sub">{inSecond(totalFixed)}</div>}
                     </div>
                     <div className={`kpi-card ${monthlyBalance >= 0 ? 'kpi-balance-ok' : 'kpi-balance-low'}`}>
-                      <div className="kpi-label">Balance</div>
-                      <div className="kpi-value">{monthlyBalance >= 0 ? '+' : ''}{m(monthlyBalance)}</div>
-                      <div className="kpi-sub">after all budgets</div>
+                      <div className="kpi-label">{t('balance')}</div>
+                      <div className="kpi-value">{ms(monthlyBalance)}</div>
+                      <div className="kpi-sub">{t('afterBudgets')}</div>
                     </div>
                   </div>
 
                   <div className="variable-status-card">
                     <div className="variable-status-top">
                       <div>
-                        <div className="variable-status-label">Variable spending</div>
+                        <div className="variable-status-label">{t('variableSpending')}</div>
                         <div className="variable-status-amounts">
                           <span className="variable-spent">{m(totalVariableActual)}</span>
-                          <span className="variable-of"> of {m(totalVariableBudget)}</span>
+                          <span className="variable-of"> {t('ofBudget', { amount: m(totalVariableBudget) })}</span>
                         </div>
                       </div>
                       <div className={`variable-pct-badge ${varPct >= 90 ? 'pct-danger' : varPct >= 70 ? 'pct-warn' : 'pct-ok'}`}>
@@ -639,36 +644,36 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                     </div>
                     <div className="variable-status-bottom">
                       {varRemaining >= 0
-                        ? <span className="var-remaining-ok">{m(varRemaining)} remaining this period</span>
-                        : <span className="var-remaining-over">{m(Math.abs(varRemaining))} over budget</span>}
+                        ? <span className="var-remaining-ok">{t('remaining', { amount: m(varRemaining) })}</span>
+                        : <span className="var-remaining-over">{t('overBudget', { amount: m(Math.abs(varRemaining)) })}</span>}
                     </div>
                   </div>
 
                   <div className="summary-box">
-                    <div className="summary-row"><span>Income</span><span className="amount-positive">+{m(totalIncome)}</span></div>
-                    <div className="summary-row"><span>Fixed expenses</span><span className="amount-negative">−{m(totalFixed)}</span></div>
-                    <div className="summary-row"><span>Variable budget</span><span className="amount-negative">−{m(totalVariableBudget)}</span></div>
+                    <div className="summary-row"><span>{t('income')}</span><span className="amount-positive">{ms(totalIncome)}</span></div>
+                    <div className="summary-row"><span>{t('fixedExpenses')}</span><span className="amount-negative">{m(-totalFixed)}</span></div>
+                    <div className="summary-row"><span>{t('variableBudget')}</span><span className="amount-negative">{m(-totalVariableBudget)}</span></div>
                     <div className="summary-divider" />
                     <div className="summary-row summary-total-row">
-                      <span>Monthly balance</span>
+                      <span>{t('monthlyBalance')}</span>
                       <span className={monthlyBalance >= 0 ? 'amount-positive' : 'amount-negative'}>
-                        {monthlyBalance >= 0 ? '+' : ''}{m(monthlyBalance)}
+                        {ms(monthlyBalance)}
                       </span>
                     </div>
                   </div>
 
                   <div className="savings-card-full">
-                    <div className="savings-card-label">TOTAL SAVINGS</div>
+                    <div className="savings-card-label">{t('totalSavings')}</div>
                     <div className="savings-card-value">{m(totalSavings)}</div>
                     {inSecond(totalSavings) && <div className="savings-card-sub">{inSecond(totalSavings)}</div>}
                   </div>
 
                   {recentReports.length > 0 && (
                     <div className="comparison-panel">
-                      <div className="comparison-title">Recent performance</div>
+                      <div className="comparison-title">{t('recentPerformance')}</div>
                       <div className="comparison-rows">
                         {recentReports.map(r => {
-                          const mName = new Date(r.year, r.month - 1).toLocaleString('en', { month: 'short', year: '2-digit' })
+                          const mName = new Date(r.year, r.month - 1).toLocaleString(locale, { month: 'short', year: '2-digit' })
                           const score = scoreOf(r)
                           return (
                             <div className="comparison-row" key={r.id}>
@@ -691,7 +696,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
 
             {canCloseLast && (
               <button className="end-month-btn" onClick={() => setCloseTarget(closingCycle)}>
-                📅 Close {cycleLabel(closingCycle, 'long')}
+                📅 {t('closePeriod', { label: cycleLabel(closingCycle, 'long') })}
               </button>
             )}
           </section>
@@ -699,8 +704,8 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
 
         {activeSection === 'fixed' && (
           <section className="section">
-            <h2 className="section-title">Fixed Monthly Expenses</h2>
-            {!fixedExpenses.length && <div className="empty-state">Rent, insurance, subscriptions: anything you pay every month. Add the first one below.</div>}
+            <h2 className="section-title">{t('fixedTitle')}</h2>
+            {!fixedExpenses.length && <div className="empty-state">{t('fixedEmpty')}</div>}
             <div className="list">
               {fixedExpenses.map(exp => {
                 const mainVal = tm(exp.amount, exp.currency)
@@ -709,23 +714,23 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                   <div className="list-row" key={exp.id}>
                     {isEditing ? (
                       <div className="edit-row-form">
-                        <input className="edit-input" placeholder="Name" value={editFixedData.name}
+                        <input className="edit-input" placeholder={t('name')} value={editFixedData.name}
                           onChange={e => setEditFixedData(p => ({ ...p, name: e.target.value }))} />
                         <div className="add-form-row">
                           {currencyPicker(editFixedData.currency, v => setEditFixedData(p => ({ ...p, currency: v })))}
-                          <input className="edit-input" type="number" inputMode="decimal" placeholder="Amount" value={editFixedData.amount}
+                          <input className="edit-input" type="number" inputMode="decimal" placeholder={t('amount')} value={editFixedData.amount}
                             onChange={e => setEditFixedData(p => ({ ...p, amount: e.target.value }))} />
                         </div>
                         <div className="edit-actions">
-                          <button className="btn-save" disabled={busy} onClick={() => handleSaveFixed(exp.id)}>Save</button>
-                          <button className="btn-cancel" onClick={() => setEditingFixed(null)}>Cancel</button>
+                          <button className="btn-save" disabled={busy} onClick={() => handleSaveFixed(exp.id)}>{t('save')}</button>
+                          <button className="btn-cancel" onClick={() => setEditingFixed(null)}>{t('cancel')}</button>
                         </div>
                       </div>
                     ) : (
                       <>
                         <div className="list-name">
                           {exp.name}
-                          {exp.is_active === false && <span className="badge-paused">Paused</span>}
+                          {exp.is_active === false && <span className="badge-paused">{t('paused')}</span>}
                         </div>
                         <div className="list-right">
                           <div className="list-amounts-col">
@@ -735,17 +740,17 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                                 ? <span className="amount-ils">≈ {m(mainVal)}</span>
                                 : inSecond(mainVal) && <span className="amount-ils">{inSecond(mainVal)}</span>}
                               {exp.previous_amount != null && exp.previous_amount !== '' && num(exp.previous_amount) !== num(exp.amount) && (
-                                <span className="saving-prev">Previous: {m(exp.previous_amount, exp.currency || main)}</span>
+                                <span className="saving-prev">{t('previous', { amount: m(exp.previous_amount, exp.currency || main) })}</span>
                               )}
                             </>}
                           </div>
                           <div className="list-actions">
-                            <button className="icon-btn" onClick={() => startEditFixed(exp)} title="Edit">✎</button>
+                            <button className="icon-btn" onClick={() => startEditFixed(exp)} title={t('edit')}>✎</button>
                             <button className={`icon-btn ${exp.is_active === false ? 'icon-btn-resume' : 'icon-btn-pause'}`}
-                              onClick={() => handleToggleFixed(exp)} title={exp.is_active === false ? 'Resume' : 'Pause'}>
+                              onClick={() => handleToggleFixed(exp)} title={exp.is_active === false ? t('resume') : t('pause')}>
                               {exp.is_active === false ? '▶' : '⏸'}
                             </button>
-                            <button className="icon-btn icon-btn-delete" onClick={() => handleDeleteFixed(exp.id)} title="Delete">✕</button>
+                            <button className="icon-btn icon-btn-delete" onClick={() => handleDeleteFixed(exp.id)} title={t('del')}>✕</button>
                           </div>
                         </div>
                       </>
@@ -755,33 +760,33 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
               })}
             </div>
             <div className="list-total-row">
-              <span>Total</span>
+              <span>{t('total')}</span>
               <span>{m(totalFixed)}{inSecond(totalFixed) ? ` · ${inSecond(totalFixed)}` : ''}</span>
             </div>
             {addFixedForm ? (
               <div className="add-form">
-                <input className="edit-input" placeholder="Expense name" value={newFixed.name}
+                <input className="edit-input" placeholder={t('expenseName')} value={newFixed.name}
                   onChange={e => setNewFixed(p => ({ ...p, name: e.target.value }))} />
                 <div className="add-form-row">
                   {currencyPicker(newFixed.currency, v => setNewFixed(p => ({ ...p, currency: v })))}
-                  <input className="edit-input" type="number" inputMode="decimal" placeholder="Amount" value={newFixed.amount}
+                  <input className="edit-input" type="number" inputMode="decimal" placeholder={t('amount')} value={newFixed.amount}
                     onChange={e => setNewFixed(p => ({ ...p, amount: e.target.value }))} />
                 </div>
                 <div className="edit-actions">
-                  <button className="btn-save" disabled={busy} onClick={handleAddFixed}>{busy ? 'Saving…' : 'Add'}</button>
-                  <button className="btn-cancel" onClick={() => setAddFixedForm(false)}>Cancel</button>
+                  <button className="btn-save" disabled={busy} onClick={handleAddFixed}>{busy ? t('saving') : t('add')}</button>
+                  <button className="btn-cancel" onClick={() => setAddFixedForm(false)}>{t('cancel')}</button>
                 </div>
               </div>
             ) : (
-              <button className="add-category-btn" onClick={() => setAddFixedForm(true)}>+ Add Fixed Expense</button>
+              <button className="add-category-btn" onClick={() => setAddFixedForm(true)}>{t('addFixed')}</button>
             )}
           </section>
         )}
 
         {activeSection === 'variable' && (
           <section className="section">
-            <h2 className="section-title">Variable Expenses</h2>
-            {!variableCategories.length && <div className="empty-state">Groceries, fuel, eating out: give each category a monthly budget, then log what you spend.</div>}
+            <h2 className="section-title">{t('variableTitle')}</h2>
+            {!variableCategories.length && <div className="empty-state">{t('variableEmpty')}</div>}
             <div className="var-list">
               {variableCategories.map(cat => {
                 const actualAmt = actuals[cat.id] || 0
@@ -795,32 +800,32 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                       <span className="var-name">{cat.name}</span>
                       <div className="var-header-right">
                         {budget > 0
-                          ? <span className="var-budget-label">Budget: {m(budget)}</span>
-                          : <button className="set-budget-btn" onClick={() => handleUpdateBudget(cat)}>Set budget</button>}
-                        <button className="icon-btn-sm" onClick={() => handleRenameCategory(cat)} title="Rename">✎</button>
-                        <button className="icon-btn-sm" onClick={() => handleUpdateBudget(cat)} title="Edit budget">⇄</button>
-                        <button className="icon-btn-sm" onClick={() => handleDeleteCategory(cat)} title="Delete category">✕</button>
+                          ? <span className="var-budget-label">{t('budgetLabel', { amount: m(budget) })}</span>
+                          : <button className="set-budget-btn" onClick={() => handleUpdateBudget(cat)}>{t('setBudget')}</button>}
+                        <button className="icon-btn-sm" onClick={() => handleRenameCategory(cat)} title={t('rename')}>✎</button>
+                        <button className="icon-btn-sm" onClick={() => handleUpdateBudget(cat)} title={t('editBudget')}>⇄</button>
+                        <button className="icon-btn-sm" onClick={() => handleDeleteCategory(cat)} title={t('deleteCategory')}>✕</button>
                       </div>
                     </div>
                     <div className="var-actual-row">
                       <span className="var-actual-amount">{m(actualAmt)}</span>
                       <span className={`diff-pill ${over ? 'diff-over' : 'diff-under'}`}>
-                        {over ? `▲ ${m(Math.abs(diff))} over` : `▼ ${m(diff)} left`}
+                        {over ? t('over', { amount: m(Math.abs(diff)) }) : t('left', { amount: m(diff) })}
                       </span>
                     </div>
                     <div className="var-actions">
                       <div className="var-input-wrap">
                         <span className="var-input-prefix">{sym}</span>
-                        <input type="number" inputMode="decimal" placeholder="Amount" min="0" className="actual-input"
+                        <input type="number" inputMode="decimal" placeholder={t('amount')} min="0" className="actual-input"
                           value={varInputs[cat.id] || ''}
                           onChange={e => setVarInputs(p => ({ ...p, [cat.id]: e.target.value }))} />
                       </div>
-                      <button className="btn-add" disabled={busy} onClick={() => handleSpend(cat, 1)}>+ Add</button>
-                      <button className="btn-return" disabled={busy} onClick={() => handleSpend(cat, -1)}>− Return</button>
+                      <button className="btn-add" disabled={busy} onClick={() => handleSpend(cat, 1)}>{t('addSpend')}</button>
+                      <button className="btn-return" disabled={busy} onClick={() => handleSpend(cat, -1)}>{t('returnSpend')}</button>
                     </div>
                     {last && (
                       <span className="var-last-added">
-                        last: {num(last.amount) < 0 ? '−' : ''}{m(Math.abs(num(last.amount)), main, 2)} · {timeAgo(last.added_at)}
+                        {t('last', { amount: m(num(last.amount), main, 2), when: timeAgo(last.added_at) })}
                       </span>
                     )}
                   </div>
@@ -829,32 +834,32 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
             </div>
             {addCategoryForm ? (
               <div className="add-form">
-                <input className="edit-input" placeholder="Category name" value={newCategory.name}
+                <input className="edit-input" placeholder={t('categoryName')} value={newCategory.name}
                   onChange={e => setNewCategory(p => ({ ...p, name: e.target.value }))} />
-                <input className="edit-input" type="number" inputMode="decimal" placeholder={`Monthly budget (${main})`} value={newCategory.budget}
+                <input className="edit-input" type="number" inputMode="decimal" placeholder={t('monthlyBudgetIn', { currency: main })} value={newCategory.budget}
                   onChange={e => setNewCategory(p => ({ ...p, budget: e.target.value }))} />
                 <div className="edit-actions">
-                  <button className="btn-save" disabled={busy} onClick={handleAddCategory}>{busy ? 'Saving…' : 'Add'}</button>
-                  <button className="btn-cancel" onClick={() => setAddCategoryForm(false)}>Cancel</button>
+                  <button className="btn-save" disabled={busy} onClick={handleAddCategory}>{busy ? t('saving') : t('add')}</button>
+                  <button className="btn-cancel" onClick={() => setAddCategoryForm(false)}>{t('cancel')}</button>
                 </div>
               </div>
             ) : (
-              <button className="add-category-btn" onClick={() => setAddCategoryForm(true)}>+ Add Category</button>
+              <button className="add-category-btn" onClick={() => setAddCategoryForm(true)}>{t('addCategory')}</button>
             )}
             <div className="list-total-row">
               <div>
-                <div>Budget: {m(totalVariableBudget)}</div>
+                <div>{t('budgetTotal', { amount: m(totalVariableBudget) })}</div>
                 {totalVariableActual > 0 && (
                   <div className={totalVariableActual > totalVariableBudget ? 'amount-negative' : 'amount-positive'}>
-                    Actual: {m(totalVariableActual)}
+                    {t('actualTotal', { amount: m(totalVariableActual) })}
                   </div>
                 )}
               </div>
               {totalVariableActual > 0 && (
                 <div className={totalVariableActual > totalVariableBudget ? 'amount-negative' : 'amount-positive'}>
                   {totalVariableActual > totalVariableBudget
-                    ? `▲ ${m(totalVariableActual - totalVariableBudget)} over`
-                    : `▼ ${m(totalVariableBudget - totalVariableActual)} left`}
+                    ? t('over', { amount: m(totalVariableActual - totalVariableBudget) })
+                    : t('left', { amount: m(totalVariableBudget - totalVariableActual) })}
                 </div>
               )}
             </div>
@@ -863,9 +868,9 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
 
         {activeSection === 'income' && (
           <section className="section">
-            <h2 className="section-title">Monthly Income</h2>
-            <h3 className="subsection-title">Regular Income</h3>
-            {!incomeSources.length && <div className="empty-state">Salaries, allowances, rent you receive: anything that comes in every month.</div>}
+            <h2 className="section-title">{t('incomeTitle')}</h2>
+            <h3 className="subsection-title">{t('regularIncome')}</h3>
+            {!incomeSources.length && <div className="empty-state">{t('incomeEmpty')}</div>}
             <div className="list">
               {incomeSources.map(src => {
                 const c = src.currency || main
@@ -875,16 +880,16 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                   <div className="list-row" key={src.id}>
                     {isEditing ? (
                       <div className="edit-row-form">
-                        <input className="edit-input" placeholder="Name" value={editIncomeData.name}
+                        <input className="edit-input" placeholder={t('name')} value={editIncomeData.name}
                           onChange={e => setEditIncomeData(p => ({ ...p, name: e.target.value }))} />
                         <div className="add-form-row">
                           {currencyPicker(editIncomeData.currency, v => setEditIncomeData(p => ({ ...p, currency: v })))}
-                          <input className="edit-input" type="number" inputMode="decimal" placeholder="Amount" value={editIncomeData.amount}
+                          <input className="edit-input" type="number" inputMode="decimal" placeholder={t('amount')} value={editIncomeData.amount}
                             onChange={e => setEditIncomeData(p => ({ ...p, amount: e.target.value }))} />
                         </div>
                         <div className="edit-actions">
-                          <button className="btn-save" disabled={busy} onClick={() => handleSaveIncomeSource(src.id)}>Save</button>
-                          <button className="btn-cancel" onClick={() => setEditingIncome(null)}>Cancel</button>
+                          <button className="btn-save" disabled={busy} onClick={() => handleSaveIncomeSource(src.id)}>{t('save')}</button>
+                          <button className="btn-cancel" onClick={() => setEditingIncome(null)}>{t('cancel')}</button>
                         </div>
                       </div>
                     ) : (
@@ -895,12 +900,12 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                             <span className="amount-eur">{m(src.amount, c)}</span>
                             {c !== main && <span className="amount-ils">≈ {m(mainVal)}</span>}
                             {src.previous_amount != null && src.previous_amount !== '' && num(src.previous_amount) !== num(src.amount) && (
-                              <span className="saving-prev">Previous: {m(src.previous_amount, c)}</span>
+                              <span className="saving-prev">{t('previous', { amount: m(src.previous_amount, c) })}</span>
                             )}
                           </div>
                           <div className="list-actions">
-                            <button className="icon-btn" onClick={() => { setEditingIncome(src.id); setEditIncomeData({ name: src.name, amount: src.amount, currency: c }) }} title="Edit">✎</button>
-                            <button className="icon-btn icon-btn-delete" onClick={() => handleDeleteIncomeSource(src.id)} title="Delete">✕</button>
+                            <button className="icon-btn" onClick={() => { setEditingIncome(src.id); setEditIncomeData({ name: src.name, amount: src.amount, currency: c }) }} title={t('edit')}>✎</button>
+                            <button className="icon-btn icon-btn-delete" onClick={() => handleDeleteIncomeSource(src.id)} title={t('del')}>✕</button>
                           </div>
                         </div>
                       </>
@@ -911,22 +916,22 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
             </div>
             {addIncomeSourceForm ? (
               <div className="add-form">
-                <input className="edit-input" placeholder="Income name" value={newIncomeSource.name}
+                <input className="edit-input" placeholder={t('incomeName')} value={newIncomeSource.name}
                   onChange={e => setNewIncomeSource(p => ({ ...p, name: e.target.value }))} />
                 <div className="add-form-row">
                   {currencyPicker(newIncomeSource.currency, v => setNewIncomeSource(p => ({ ...p, currency: v })))}
-                  <input className="edit-input" type="number" inputMode="decimal" placeholder="Amount" value={newIncomeSource.amount}
+                  <input className="edit-input" type="number" inputMode="decimal" placeholder={t('amount')} value={newIncomeSource.amount}
                     onChange={e => setNewIncomeSource(p => ({ ...p, amount: e.target.value }))} />
                 </div>
                 <div className="edit-actions">
-                  <button className="btn-save" disabled={busy} onClick={handleAddIncomeSource}>{busy ? 'Saving…' : 'Add'}</button>
-                  <button className="btn-cancel" onClick={() => setAddIncomeSourceForm(false)}>Cancel</button>
+                  <button className="btn-save" disabled={busy} onClick={handleAddIncomeSource}>{busy ? t('saving') : t('add')}</button>
+                  <button className="btn-cancel" onClick={() => setAddIncomeSourceForm(false)}>{t('cancel')}</button>
                 </div>
               </div>
             ) : (
-              <button className="add-category-btn" onClick={() => setAddIncomeSourceForm(true)}>+ Add Income Source</button>
+              <button className="add-category-btn" onClick={() => setAddIncomeSourceForm(true)}>{t('addIncomeSource')}</button>
             )}
-            <h3 className="subsection-title">One-time Income (this period)</h3>
+            <h3 className="subsection-title">{t('oneTimeTitle')}</h3>
             <div className="list">
               {cycleOneTime.map(inc => {
                 const c = inc.currency || main
@@ -947,31 +952,31 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
               })}
             </div>
             <div className="add-form">
-              <p className="add-form-title">Add One-time Income</p>
-              <input className="edit-input" placeholder="Description (e.g. bonus, gift)" value={newIncomeForm.description}
+              <p className="add-form-title">{t('addOneTime')}</p>
+              <input className="edit-input" placeholder={t('oneTimePlaceholder')} value={newIncomeForm.description}
                 onChange={e => setNewIncomeForm(p => ({ ...p, description: e.target.value }))} />
               <div className="add-form-row">
                 <div className="var-input-wrap" style={{ flex: 1 }}>
                   <span className="var-input-prefix">{currencySymbol(newIncomeForm.currency || main)}</span>
-                  <input type="number" inputMode="decimal" placeholder="Amount" className="actual-input" value={newIncomeForm.amount}
+                  <input type="number" inputMode="decimal" placeholder={t('amount')} className="actual-input" value={newIncomeForm.amount}
                     onChange={e => setNewIncomeForm(p => ({ ...p, amount: e.target.value }))} />
                 </div>
                 {currencyPicker(newIncomeForm.currency, v => setNewIncomeForm(p => ({ ...p, currency: v })))}
               </div>
-              <button className="btn-primary-full" disabled={busy} onClick={handleAddIncome}>{busy ? 'Saving…' : '+ Add'}</button>
+              <button className="btn-primary-full" disabled={busy} onClick={handleAddIncome}>{busy ? t('saving') : t('addPlain')}</button>
             </div>
             <div className="list-total-row">
-              <span>Total Income</span>
+              <span>{t('totalIncome')}</span>
               <span>{m(totalIncome)}{inSecond(totalIncome) ? ` · ${inSecond(totalIncome)}` : ''}</span>
             </div>
-            <p className="note">One-time income counts in the period it was added.{second && rate ? ` Amounts in ${second} are converted at 1 ${main} = ${rate.toFixed(3)} ${second}.` : ''}</p>
+            <p className="note">{t('oneTimeNote')}{second && rate ? ` ${t('convertedNote', { second, main, rate: rate.toFixed(3) })}` : ''}</p>
           </section>
         )}
 
         {activeSection === 'savings' && (
           <section className="section">
-            <h2 className="section-title">Savings Snapshot</h2>
-            {!savings.length && <div className="empty-state">Add a savings account to track deposits. Deposits earn a bonus in your monthly report.</div>}
+            <h2 className="section-title">{t('savingsTitle')}</h2>
+            {!savings.length && <div className="empty-state">{t('savingsEmpty')}</div>}
             <div className="savings-list">
               {savings.map(sv => {
                 const c = sv.currency || main
@@ -982,8 +987,8 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                       <span className="saving-name">{sv.name}</span>
                       <div className="saving-header-actions">
                         <span className="currency-badge">{c}</span>
-                        <button className="icon-btn" onClick={() => handleRenameSaving(sv)} title="Rename">✎</button>
-                        <button className="icon-btn icon-btn-delete" onClick={() => handleDeleteSaving(sv)} title="Delete">✕</button>
+                        <button className="icon-btn" onClick={() => handleRenameSaving(sv)} title={t('rename')}>✎</button>
+                        <button className="icon-btn icon-btn-delete" onClick={() => handleDeleteSaving(sv)} title={t('del')}>✕</button>
                       </div>
                     </div>
                     <div className="saving-amount-row">
@@ -992,22 +997,22 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                         : inSecond(balance) && <span className="saving-converted">≈ {inSecond(balance)}</span>}
                       {lastChange !== 0 && previous !== 0 && (
                         <span className={`delta-badge ${lastChange < 0 ? 'delta-down' : 'delta-up'}`}>
-                          {lastChange < 0 ? '▼' : '▲'} {m(Math.abs(lastChange), c, 2)} vs prev
+                          {t('vsPrev', { arrow: lastChange < 0 ? '▼' : '▲', amount: m(Math.abs(lastChange), c, 2) })}
                         </span>
                       )}
                     </div>
                     {previous > 0 && previous !== balance && (
-                      <div className="saving-prev">Previous: {m(previous, c, 2)}</div>
+                      <div className="saving-prev">{t('previous', { amount: m(previous, c, 2) })}</div>
                     )}
                     <div className="saving-actions">
                       <div className="var-input-wrap" style={{ flex: 1 }}>
                         <span className="var-input-prefix">{currencySymbol(c)}</span>
-                        <input type="number" inputMode="decimal" placeholder="Amount" min="0" className="actual-input"
+                        <input type="number" inputMode="decimal" placeholder={t('amount')} min="0" className="actual-input"
                           value={savingInputs[sv.id] || ''}
                           onChange={e => setSavingInputs(p => ({ ...p, [sv.id]: e.target.value }))} />
                       </div>
-                      <button className="btn-add" disabled={busy} onClick={() => handleSavingTransaction(sv, 'add')}>+ Deposit</button>
-                      <button className="btn-return" disabled={busy} onClick={() => handleSavingTransaction(sv, 'withdraw')}>− Withdraw</button>
+                      <button className="btn-add" disabled={busy} onClick={() => handleSavingTransaction(sv, 'add')}>{t('deposit')}</button>
+                      <button className="btn-return" disabled={busy} onClick={() => handleSavingTransaction(sv, 'withdraw')}>{t('withdraw')}</button>
                     </div>
                   </div>
                 )
@@ -1015,23 +1020,23 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
             </div>
             {addSavingForm ? (
               <div className="add-form">
-                <input className="edit-input" placeholder="Account name" value={newSaving.name}
+                <input className="edit-input" placeholder={t('accountName')} value={newSaving.name}
                   onChange={e => setNewSaving(p => ({ ...p, name: e.target.value }))} />
                 <div className="add-form-row">
-                  <input className="edit-input" type="number" inputMode="decimal" placeholder="Starting amount" value={newSaving.amount}
+                  <input className="edit-input" type="number" inputMode="decimal" placeholder={t('startingAmount')} value={newSaving.amount}
                     onChange={e => setNewSaving(p => ({ ...p, amount: e.target.value }))} style={{ flex: 1 }} />
                   {currencyPicker(newSaving.currency, v => setNewSaving(p => ({ ...p, currency: v })))}
                 </div>
                 <div className="edit-actions">
-                  <button className="btn-save" disabled={busy} onClick={handleAddSaving}>{busy ? 'Saving…' : 'Add'}</button>
-                  <button className="btn-cancel" onClick={() => setAddSavingForm(false)}>Cancel</button>
+                  <button className="btn-save" disabled={busy} onClick={handleAddSaving}>{busy ? t('saving') : t('add')}</button>
+                  <button className="btn-cancel" onClick={() => setAddSavingForm(false)}>{t('cancel')}</button>
                 </div>
               </div>
             ) : (
-              <button className="add-category-btn" onClick={() => setAddSavingForm(true)}>+ Add Saving Account</button>
+              <button className="add-category-btn" onClick={() => setAddSavingForm(true)}>{t('addSaving')}</button>
             )}
             <div className="list-total-row">
-              <span>Total savings</span>
+              <span>{t('totalSavingsRow')}</span>
               <span>{m(totalSavings)}{inSecond(totalSavings) ? ` · ${inSecond(totalSavings)}` : ''}</span>
             </div>
           </section>
@@ -1039,14 +1044,14 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
 
         {activeSection === 'reports' && (
           <section className="section">
-            <h2 className="section-title">Monthly Reports</h2>
+            <h2 className="section-title">{t('reportsTitle')}</h2>
             {(() => {
               const live = buildSnapshot(cycle)
               const j = live.reportJson
               return (
                 <div className="report-card report-live" onClick={() => setExpandedReport(expandedReport === 'live' ? null : 'live')}>
                   <div className="report-card-header">
-                    <span className="report-month">This period so far <span className="report-range">{fmtDay(cycle.start)} – {fmtDay(new Date(cycle.end.getTime() - 86400000))}</span></span>
+                    <span className="report-month">{t('thisPeriod')} <span className="report-range">{fmtDay(cycle.start)} – {fmtDay(new Date(cycle.end.getTime() - 86400000))}</span></span>
                     <div className="report-meta">
                       <span className={`score-badge score-${live.score >= 8 ? 'high' : live.score >= 5 ? 'mid' : 'low'}`}>{live.score}/10</span>
                       <span className="report-chevron">{expandedReport === 'live' ? '▲' : '▼'}</span>
@@ -1055,7 +1060,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                   {expandedReport === 'live' && (
                     <div className="report-expanded">
                       {reportBody(j, j.fixedChanges || [], depositsOf(j), live.score)}
-                      <p className="history-note">Live view. It is saved as a report when you close this period after it ends.</p>
+                      <p className="history-note">{t('liveNote')}</p>
                     </div>
                   )}
                 </div>
@@ -1063,14 +1068,14 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
             })()}
             {unclosedCycles.length > 0 && (
               <div className="unclosed-list">
-                <p className="history-note">Finished periods without a report:</p>
+                <p className="history-note">{t('unclosed')}</p>
                 {unclosedCycles.map(c => (
-                  <button key={c.key} className="add-category-btn" onClick={() => setCloseTarget(c)}>Close {cycleLabel(c, 'long')}</button>
+                  <button key={c.key} className="add-category-btn" onClick={() => setCloseTarget(c)}>{t('closePeriod', { label: cycleLabel(c, 'long') })}</button>
                 ))}
               </div>
             )}
             {monthlyReports.length === 0 ? (
-              <div className="empty-state">No saved reports yet. When a period ends, press "Close" on the Overview tab to save its report.</div>
+              <div className="empty-state">{t('noReports')}</div>
             ) : (
               <>
               {(() => {
@@ -1096,21 +1101,21 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                 return (
                   <div className="history-section">
                     <div className="history-header">
-                      <h3 className="subsection-title">Spending History (actual {main})</h3>
+                      <h3 className="subsection-title">{t('history', { currency: main })}</h3>
                       <select className="history-filter" value={historyFilter} onChange={e => setHistoryFilter(e.target.value)}>
-                        <option value="last3">Last 3 months</option>
-                        <option value="all">All months</option>
-                        <optgroup label="Quarter">
+                        <option value="last3">{t('last3')}</option>
+                        <option value="all">{t('allMonths')}</option>
+                        <optgroup label={t('quarter')}>
                           {quarters.map(k => <option key={k} value={k}>{k.replace('-', ' ')}</option>)}
                         </optgroup>
-                        <optgroup label="Single month">
+                        <optgroup label={t('singleMonth')}>
                           {[...allMonths].reverse().map(x => <option key={x.r.id} value={x.r.id}>{cycleLabel(x.r, 'long')}</option>)}
                         </optgroup>
                       </select>
                     </div>
                     <div className="history-scroll">
                       <table className="report-numbers history-table">
-                        <thead><tr><th>Category</th>{months.map(x => <th key={x.r.id}>{cycleLabel(x.r).replace(/ \d{4}$/, '')}</th>)}<th>Avg</th></tr></thead>
+                        <thead><tr><th>{t('category')}</th>{months.map(x => <th key={x.r.id}>{cycleLabel(x.r).replace(/ \d{4}$/, '')}</th>)}<th>{t('avg')}</th></tr></thead>
                         <tbody>
                           {rows.map(n => (
                             <tr key={n}>
@@ -1118,28 +1123,28 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                               {months.map(x => {
                                 const c = cat(x, n)
                                 return <td key={x.r.id} className={c && c.actual > c.budget ? 'num-over' : ''}
-                                  title={c ? `Budget ${m(c.budget)}` : ''}>{c ? m(c.actual) : '–'}</td>
+                                  title={c ? t('budgetLabel', { amount: m(c.budget) }) : ''}>{c ? m(c.actual) : '–'}</td>
                               })}
                               <td>{m(avg(x => cat(x, n)?.actual || 0))}</td>
                             </tr>
                           ))}
-                          <tr className="num-total"><td>Variable total</td>{months.map(x => <td key={x.r.id}>{m(varTot(x))}</td>)}<td>{m(avg(varTot))}</td></tr>
+                          <tr className="num-total"><td>{t('variableTotal')}</td>{months.map(x => <td key={x.r.id}>{m(varTot(x))}</td>)}<td>{m(avg(varTot))}</td></tr>
                           <tr className="fixed-toggle" onClick={() => setShowFixedItems(v => !v)}>
-                            <td>{showFixedItems ? '▾' : '▸'} Fixed total</td>{months.map(x => <td key={x.r.id}>{m(x.j.fixedTotal)}</td>)}<td>{m(avg(x => x.j.fixedTotal || 0))}</td></tr>
+                            <td>{showFixedItems ? '▾' : (lang === 'he' ? '◂' : '▸')} {t('fixedTotal')}</td>{months.map(x => <td key={x.r.id}>{m(x.j.fixedTotal)}</td>)}<td>{m(avg(x => x.j.fixedTotal || 0))}</td></tr>
                           {showFixedItems && [...new Set(months.flatMap(x => (x.j.fixedItems || []).map(i => i.name)))].map(name => (
                             <tr key={name} className="fixed-change"><td>↳ {name}</td>
                               {months.map(x => { const it = x.j.fixedItems?.find(i => i.name === name)
                                 return <td key={x.r.id}>{x.j.fixedItems ? m(it ? it.amount : 0) : '–'}</td> })}
                               <td></td></tr>
                           ))}
-                          <tr><td>Income</td>{months.map(x => <td key={x.r.id}>{m(x.j.income)}</td>)}<td>{m(avg(x => x.j.income || 0))}</td></tr>
-                          <tr className="num-total"><td>Left over</td>{months.map(x => { const l = (x.j.income || 0) - (x.j.fixedTotal || 0) - varTot(x)
+                          <tr><td>{t('income')}</td>{months.map(x => <td key={x.r.id}>{m(x.j.income)}</td>)}<td>{m(avg(x => x.j.income || 0))}</td></tr>
+                          <tr className="num-total"><td>{t('leftOver')}</td>{months.map(x => { const l = (x.j.income || 0) - (x.j.fixedTotal || 0) - varTot(x)
                             return <td key={x.r.id} className={l < 0 ? 'num-over' : 'num-under'}>{m(l)}</td> })}
                             <td>{m(avg(x => (x.j.income || 0) - (x.j.fixedTotal || 0) - varTot(x)))}</td></tr>
                         </tbody>
                       </table>
                     </div>
-                    <p className="history-note">Red = over budget. Each period starts on day {startDay} of the month.</p>
+                    <p className="history-note">{t('historyNote', { day: startDay })}</p>
                   </div>
                 )
               })()}
@@ -1158,7 +1163,7 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
                             <span className={`score-badge score-${score >= 8 ? 'high' : score >= 5 ? 'mid' : 'low'}`}>{score}/10</span>
                           )}
                           {dep.bonus > 0 && (
-                            <span className="bonus-badge" title="Savings deposit bonus, not part of the budget score">💰 +{dep.bonus}</span>
+                            <span className="bonus-badge" title={t('bonusTitle')}>💰 +{dep.bonus}</span>
                           )}
                           <span className="report-chevron">{isExpanded ? '▲' : '▼'}</span>
                         </div>
@@ -1174,10 +1179,10 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
             )}
             {monthlyReports.length > 1 && (
               <div className="trend-section">
-                <h3 className="subsection-title">Month-by-Month Score</h3>
+                <h3 className="subsection-title">{t('trendTitle')}</h3>
                 <div className="trend-bars">
                   {[...monthlyReports].reverse().map(r => {
-                    const mName = new Date(r.year, r.month - 1).toLocaleString('en', { month: 'short' })
+                    const mName = new Date(r.year, r.month - 1).toLocaleString(locale, { month: 'short' })
                     const score = scoreOf(r) || 0
                     return (
                       <div className="trend-bar-item" key={r.id}>
@@ -1200,15 +1205,14 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
       {closeTarget && (
         <div className="modal-overlay" onClick={() => !busy && setCloseTarget(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3>Close {cycleLabel(closeTarget, 'long')}?</h3>
+            <h3>{t('closeConfirmTitle', { label: cycleLabel(closeTarget, 'long') })}</h3>
             <p>
-              This saves the report for the period {fmtDay(closeTarget.start)} – {fmtDay(new Date(closeTarget.end.getTime() - 86400000))}.
-              The current period is not affected.
-              {reportKeys.has(closeTarget.key) && ' A report for this period already exists and will be updated.'}
+              {t('closeConfirmText', { from: fmtDay(closeTarget.start), to: fmtDay(new Date(closeTarget.end.getTime() - 86400000)) })}
+              {reportKeys.has(closeTarget.key) && ` ${t('closeExists')}`}
             </p>
             <div className="modal-actions">
-              <button className="btn-cancel" onClick={() => setCloseTarget(null)} disabled={busy}>Cancel</button>
-              <button className="btn-primary" onClick={() => handleCloseCycle(closeTarget)} disabled={busy}>{busy ? 'Saving…' : 'Save report'}</button>
+              <button className="btn-cancel" onClick={() => setCloseTarget(null)} disabled={busy}>{t('cancel')}</button>
+              <button className="btn-primary" onClick={() => handleCloseCycle(closeTarget)} disabled={busy}>{busy ? t('saving') : t('saveReport')}</button>
             </div>
           </div>
         </div>
@@ -1217,14 +1221,14 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
       {endMonthResult && (
         <div className="modal-overlay" onClick={() => setEndMonthResult(null)}>
           <div className="modal modal-report" onClick={e => e.stopPropagation()}>
-            <h3>{endMonthResult.label} Report</h3>
+            <h3>{t('reportTitle', { label: endMonthResult.label })}</h3>
             <div className={`score-display score-${endMonthResult.score >= 8 ? 'high' : endMonthResult.score >= 5 ? 'mid' : 'low'}`}>
               {endMonthResult.score}/10
             </div>
             <p className="report-summary">
-              {endMonthResult.reasons.length ? endMonthResult.reasons.map(x => `−${x.pts} ${reasonText(x)}`).join(' · ') : 'No points lost. Every category stayed within budget.'}
+              {endMonthResult.reasons.length ? endMonthResult.reasons.map(x => `−${x.pts} ${reasonLine(x)}`).join(' · ') : t('allWithinBudget')}
             </p>
-            <button className="btn-primary" onClick={() => { setEndMonthResult(null); setActiveSection('reports') }}>See the report</button>
+            <button className="btn-primary" onClick={() => { setEndMonthResult(null); setActiveSection('reports') }}>{t('seeReport')}</button>
           </div>
         </div>
       )}
@@ -1232,34 +1236,35 @@ export default function App({ budgetId, user, onSignOut, onSwitchBudget }) {
       {settingsOpen && (
         <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
           <div className="modal settings-modal" onClick={e => e.stopPropagation()}>
-            <h3>Settings</h3>
-            <p className="setup-hint">Signed in as {user?.emailAddress}</p>
+            <h3>{t('settings')}</h3>
+            <LanguageSwitch className="lang-switch-light" />
+            <p className="setup-hint">{t('signedInAs', { email: user?.emailAddress })}</p>
 
             <div className="settings-group">
-              <label className="setup-label">Invite your partner to this budget
+              <label className="setup-label">{t('invitePartner')}
                 <input className="edit-input" type="email" placeholder="partner@gmail.com" value={inviteEmail} dir="ltr"
                   onChange={e => setInviteEmail(e.target.value)} />
               </label>
-              <button className="btn-primary-full" disabled={busy} onClick={handleInvite}>{busy ? 'Sending…' : 'Send invitation'}</button>
-              <p className="setup-hint">They get an email from Google, open FamilyBGT, sign in and choose "Join a budget shared with me".</p>
+              <button className="btn-primary-full" disabled={busy} onClick={handleInvite}>{busy ? t('sending') : t('sendInvite')}</button>
+              <p className="setup-hint">{t('inviteHint')}</p>
             </div>
 
             <div className="settings-group">
-              <label className="setup-label">Each period starts on day
+              <label className="setup-label">{t('periodStartDay')}
                 <select className="currency-select" value={startDay} onChange={e => handleStartDay(e.target.value)}>
                   {Array.from({ length: 28 }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </label>
-              <p className="setup-hint">Main currency: {main}{second ? ` · Second currency: ${second}` : ''}</p>
+              <p className="setup-hint">{t('currenciesLine', { main })}{second ? t('secondLine', { second }) : ''}</p>
             </div>
 
             <div className="settings-group">
-              <a className="settings-link" href={`https://docs.google.com/spreadsheets/d/${budgetId}`} target="_blank" rel="noreferrer">Open the budget sheet in Google Sheets</a>
-              <button className="settings-link" onClick={onSwitchBudget}>Switch budget</button>
-              <button className="settings-link" onClick={onSignOut}>Sign out</button>
+              <a className="settings-link" href={`https://docs.google.com/spreadsheets/d/${budgetId}`} target="_blank" rel="noreferrer">{t('openSheet')}</a>
+              <button className="settings-link" onClick={onSwitchBudget}>{t('switchBudget')}</button>
+              <button className="settings-link" onClick={onSignOut}>{t('signOut')}</button>
             </div>
 
-            <button className="btn-cancel" onClick={() => setSettingsOpen(false)}>Close</button>
+            <button className="btn-cancel" onClick={() => setSettingsOpen(false)}>{t('close')}</button>
           </div>
         </div>
       )}

@@ -6,6 +6,8 @@ import { pickSharedSheet } from './google/picker.js'
 import { findBudgets, whoAmI, createBudget, getFileMeta, ensureSchema, APP_TAG } from './sheets.js'
 import { COMMON_CURRENCIES, currencySymbol } from './budget.js'
 import { DEFAULT_CATEGORIES } from './defaults.js'
+import { I18nContext, LANGS, initialLang, saveLang, useI18n } from './i18n.js'
+import LanguageSwitch from './LanguageSwitch.jsx'
 
 const CHOSEN_KEY = 'fbgt_budget'
 const ls = {
@@ -23,15 +25,17 @@ function guessCurrency() {
 }
 
 function CurrencySelect({ value, onChange, allowNone, exclude }) {
+  const { t } = useI18n()
   return (
-    <select className="currency-select setup-select" value={value} onChange={e => onChange(e.target.value)}>
-      {allowNone && <option value="">None</option>}
+    <select className="currency-select setup-select" value={value} onChange={e => onChange(e.target.value)} dir="ltr">
+      {allowNone && <option value="">{t('none')}</option>}
       {COMMON_CURRENCIES.filter(c => c !== exclude).map(c => <option key={c} value={c}>{c} {currencySymbol(c)}</option>)}
     </select>
   )
 }
 
-export default function Root() {
+function Gate() {
+  const { t, lang } = useI18n()
   const [phase, setPhase] = useState(() => (getToken() ? 'loading' : 'signin')) // signin | loading | choose | setup | app
   const [user, setUser] = useState(null)
   const [budgets, setBudgets] = useState([])
@@ -52,8 +56,8 @@ export default function Root() {
       if (pick) { ls.set(CHOSEN_KEY, pick.id); setBudgetId(pick.id); setPhase('app') }
       else setPhase(list.length ? 'choose' : 'setup')
     } catch (e) {
-      if (e instanceof AuthNeeded) setPhase('signin')
-      else { setError(e.message); setPhase('signin') }
+      if (!(e instanceof AuthNeeded)) setError(e.message)
+      setPhase('signin')
     }
   }, [])
 
@@ -73,7 +77,10 @@ export default function Root() {
     if (busy) return
     setBusy(true); setError('')
     try {
-      const file = await createBudget({ main_currency: mainCur, second_currency: secondCur, language_default: 'en', categories: DEFAULT_CATEGORIES.en })
+      const file = await createBudget({
+        main_currency: mainCur, second_currency: secondCur, language_default: lang,
+        categories: DEFAULT_CATEGORIES[lang] || DEFAULT_CATEGORIES.en,
+      })
       ls.set(CHOSEN_KEY, file.id); setBudgetId(file.id); setPhase('app')
     } catch (e) {
       if (e instanceof AuthNeeded) setPhase('signin')
@@ -88,7 +95,7 @@ export default function Root() {
       const picked = await pickSharedSheet()
       if (!picked) return
       const meta = await getFileMeta(picked.id)
-      if (meta.appProperties?.[APP_TAG.key] !== APP_TAG.value) throw new Error('That sheet is not a FamilyBGT budget. Ask your partner to invite you from FamilyBGT settings.')
+      if (meta.appProperties?.[APP_TAG.key] !== APP_TAG.value) throw new Error(t('notABudget'))
       await ensureSchema(picked.id)
       ls.set(CHOSEN_KEY, picked.id); setBudgetId(picked.id); setPhase('app')
     } catch (e) {
@@ -113,53 +120,73 @@ export default function Root() {
   return (
     <div className="pw-screen">
       <div className="pw-card">
+        <LanguageSwitch />
         <div className="pw-icon">💰</div>
         <h1 className="pw-title">FamilyBGT</h1>
 
-        {phase === 'loading' && <p className="pw-sub">Loading…</p>}
+        {phase === 'loading' && <p className="pw-sub">{t('loading')}</p>}
 
         {phase === 'signin' && (
           <>
-            <p className="pw-sub">A free family budget. Your data stays in your own Google Drive.</p>
-            <button className="pw-btn" onClick={handleSignIn}>Sign in with Google</button>
+            <p className="pw-sub">{t('tagline')}</p>
+            <button className="pw-btn" onClick={handleSignIn}>{t('signIn')}</button>
           </>
         )}
 
         {phase === 'choose' && (
           <>
-            <p className="pw-sub">Choose a budget</p>
+            <p className="pw-sub">{t('chooseBudget')}</p>
             <div className="setup-list">
               {budgets.map(b => (
                 <button key={b.id} className="setup-option" onClick={() => choose(b.id)}>
                   <strong>{b.name}</strong>
-                  <span>{b.ownedByMe ? 'Yours' : `Shared by ${b.owners?.[0]?.emailAddress || 'someone'}`}</span>
+                  <span>{b.ownedByMe ? t('yours') : t('sharedBy', { email: b.owners?.[0]?.emailAddress || t('someone') })}</span>
                 </button>
               ))}
             </div>
-            <button className="pw-link" onClick={() => setPhase('setup')}>Start or join another budget</button>
+            <button className="pw-link" onClick={() => setPhase('setup')}>{t('startOrJoin')}</button>
           </>
         )}
 
         {phase === 'setup' && (
           <>
-            <p className="pw-sub">Start a new budget</p>
-            <label className="setup-label">Main currency
+            <p className="pw-sub">{t('startNew')}</p>
+            <label className="setup-label">{t('mainCurrency')}
               <CurrencySelect value={mainCur} onChange={v => { setMainCur(v); if (v === secondCur) setSecondCur('') }} />
             </label>
-            <label className="setup-label">Second currency (optional)
+            <label className="setup-label">{t('secondCurrency')}
               <CurrencySelect value={secondCur} onChange={setSecondCur} allowNone exclude={mainCur} />
             </label>
-            <p className="setup-hint">The main currency can't be changed later. Budgets and reports use it.</p>
-            <button className="pw-btn" onClick={handleCreate} disabled={busy}>{busy ? 'Creating…' : 'Create my budget'}</button>
-            <div className="setup-divider"><span>or</span></div>
-            <button className="pw-btn pw-btn-secondary" onClick={handleJoin} disabled={busy}>Join a budget shared with me</button>
+            <p className="setup-hint">{t('mainCurrencyHint')}</p>
+            <button className="pw-btn" onClick={handleCreate} disabled={busy}>{busy ? t('creating') : t('createBudget')}</button>
+            <div className="setup-divider"><span>{t('or')}</span></div>
+            <button className="pw-btn pw-btn-secondary" onClick={handleJoin} disabled={busy}>{t('joinShared')}</button>
           </>
         )}
 
         {error && <p className="pw-error">{error}</p>}
-        {user?.emailAddress && phase !== 'signin' && <p className="setup-hint">Signed in as {user.emailAddress}</p>}
-        <p className="setup-footer"><a href="privacy.html">Privacy</a> · <a href="https://github.com/IsraelWall/familybgt">Source code</a></p>
+        {user?.emailAddress && phase !== 'signin' && <p className="setup-hint">{t('signedInAs', { email: user.emailAddress })}</p>}
+        <p className="setup-footer">
+          <a href="guide.html">{t('guide')}</a> · <a href="privacy.html">{t('privacy')}</a> · <a href="https://github.com/IsraelWall/familybgt">{t('sourceCode')}</a>
+        </p>
       </div>
     </div>
+  )
+}
+
+export default function Root() {
+  const [lang, setLangState] = useState(initialLang)
+  const setLang = l => { saveLang(l); setLangState(l) }
+
+  // Sync <html lang dir> with the chosen language (external DOM state)
+  useEffect(() => {
+    document.documentElement.lang = lang
+    document.documentElement.dir = LANGS[lang].dir
+  }, [lang])
+
+  return (
+    <I18nContext.Provider value={{ lang, setLang }}>
+      <Gate />
+    </I18nContext.Provider>
   )
 }
